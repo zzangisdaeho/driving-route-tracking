@@ -8,13 +8,14 @@ import org.apache.kafka.common.utils.Bytes;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.kstream.*;
+import org.apache.kafka.streams.processor.api.ProcessorSupplier;
 import org.apache.kafka.streams.state.SessionStore;
+import org.apache.kafka.streams.state.Stores;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.annotation.EnableKafkaStreams;
 import org.springframework.kafka.annotation.KafkaStreamsDefaultConfiguration;
 import org.springframework.kafka.config.KafkaStreamsConfiguration;
-import org.springframework.util.StringUtils;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -37,6 +38,11 @@ public class KafkaStreamsConfig {
         props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "localhost:9092");
         props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass());
         props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass());
+
+        // 커밋 간격을 5초로 설정
+        props.put(StreamsConfig.COMMIT_INTERVAL_MS_CONFIG, 5000);
+
+        // 상태 저장소를 메모리 기반으로 설정
         props.put(StreamsConfig.STATE_DIR_CONFIG, "/tmp/kafka-streams");
 
         return new KafkaStreamsConfiguration(props);
@@ -45,36 +51,28 @@ public class KafkaStreamsConfig {
     @Bean
     public KStream<String, String> kStream(StreamsBuilder streamsBuilder) {
         KStream<String, String> stream = streamsBuilder.stream("gps-topic", Consumed.with(Serdes.String(), Serdes.String()))
-                .peek((key, value) -> log.info("record income = \n key : {}, value : {}", key, value))
+                .peek((key, value) -> log.trace("record income = \n key : {}, value : {}", key, value))
                 .mapValues(KafkaStreamsConfig::parsingRecord);
-//                .map((key, value) -> {
-//                    String newValue = parsingRecord(value);
-//                    return new KeyValue<>(key, newValue);
-//                });
-
 
         KGroupedStream<String, String> groupedStream = stream.groupByKey();
 
-        // 상태 저장소를 설정
-        Materialized<String, String, SessionStore<Bytes, byte[]>> materialized =
-                Materialized.<String, String, SessionStore<Bytes, byte[]>>as(SESSION_STORE_NAME)
-                        .withKeySerde(Serdes.String())
-                        .withValueSerde(Serdes.String());
+        // 상태 저장소를 메모리 기반 세션 저장소로 설정
+        Materialized<String, String, SessionStore<Bytes, byte[]>> materialized = Materialized
+                .<String, String>as(Stores.inMemorySessionStore(SESSION_STORE_NAME, Duration.ofHours(24)))
+                .withKeySerde(Serdes.String())
+                .withValueSerde(Serdes.String());
 
-        SessionWindows sessionWindows = SessionWindows.ofInactivityGapWithNoGrace(Duration.ofSeconds(10));
+        SessionWindows sessionWindows = SessionWindows.ofInactivityGapWithNoGrace(Duration.ofSeconds(60));
 
         KTable<Windowed<String>, String> aggregatedTable = groupedStream
                 .windowedBy(sessionWindows)
                 .reduce(
                         (aggValue, newValue) -> aggValue.concat("\n").concat(newValue),
                         materialized
-                )
-//                .suppress(Suppressed.untilWindowCloses(Suppressed.BufferConfig.unbounded()))
-                ;
-
+                );
 
         aggregatedTable.toStream()
-                .filter((windowedKey, aggregatedValue) -> aggregatedValue!=null && !aggregatedValue.isBlank())
+                .filter((windowedKey, aggregatedValue) -> aggregatedValue != null && !aggregatedValue.isBlank())
                 .filter((windowedKey, aggregatedValue) -> aggregatedValue.contains("STOP"))
                 .process(VehicleDataProcessor.supplier(), SESSION_STORE_NAME)
                 .foreach((windowedKey, aggregatedValue) -> {
@@ -86,8 +84,7 @@ public class KafkaStreamsConfig {
     }
 
     private static String parsingRecord(String value) {
-
-        if(value.equalsIgnoreCase("\"STOP\"")) {
+        if (value.equalsIgnoreCase("\"STOP\"")) {
             return "STOP";
         }
 
@@ -105,6 +102,4 @@ public class KafkaStreamsConfig {
         }
         return "";
     }
-
-
 }

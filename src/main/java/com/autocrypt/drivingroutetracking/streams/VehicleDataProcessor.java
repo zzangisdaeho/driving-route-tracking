@@ -22,8 +22,8 @@ public class VehicleDataProcessor implements Processor<Windowed<String>, String,
 
     @Override
     public void process(Record<Windowed<String>, String> record) {
-        String value = record.value();
-//        log.info("value processor receive : \n{}", value);
+//        String value = record.value();
+//        log.trace("value processor receive : \n{}", value);
         Windowed<String> key = record.key();
         store.remove(key);
         context.commit();
