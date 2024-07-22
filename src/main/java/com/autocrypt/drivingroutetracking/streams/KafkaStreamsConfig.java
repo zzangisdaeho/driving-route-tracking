@@ -58,7 +58,8 @@ public class KafkaStreamsConfig {
 
         // 상태 저장소를 메모리 기반 세션 저장소로 설정
         Materialized<String, String, SessionStore<Bytes, byte[]>> materialized = Materialized
-                .<String, String>as(Stores.inMemorySessionStore(SESSION_STORE_NAME, Duration.ofHours(24)))
+                .<String, String>as(Stores.inMemorySessionStore(SESSION_STORE_NAME, Duration.ofHours(24))) // inmemory DB
+//                .<String, String, SessionStore<Bytes, byte[]>>as(SESSION_STORE_NAME) // local storage DB
                 .withKeySerde(Serdes.String())
                 .withValueSerde(Serdes.String());
 
